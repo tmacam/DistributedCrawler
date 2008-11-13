@@ -342,6 +342,9 @@ class GdbmBaseControler(BaseControler):
         queue_store_path = self.store_path + "/queue.gdbm"
         done_store_path = self.store_path + "/done.gdbm"
         err_store_path = self.store_path + "/error.gdbm"
+        # Make dirs
+        if not os.path.isdir(self.store_path):
+            os.makedirs(self.store_path)
         # Load for syncrhonized read and write, creating the DBs if necessary
         self.store = gdbm.open(queue_store_path, "cs")
         self.done_store = gdbm.open(done_store_path, "cs")
