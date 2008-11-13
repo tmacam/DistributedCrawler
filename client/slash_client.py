@@ -38,7 +38,7 @@ log = sys.stdout
 class SlashClient(BaseClient):
     """Client for crawling Slashdot Articles."""
     def __init__(self, client_id, base_url, store_dir=None):
-        """DiggClient Constructor."""
+        """SlashClient Constructor."""
         # Parent class constructor
         BaseClient.__init__(self, client_id, base_url, store_dir)
         # Informing the version of our ArticleRetriver
