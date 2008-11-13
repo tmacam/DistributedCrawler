@@ -1,7 +1,42 @@
-#!/usr/bin/python2.5
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-__version__ = "$Revision: 235 $".split()[1]
+"""Basic infra-estructure and classes for a DistributedCrawler server.
+
+This module provides the basic framework for constructing the sever-side part of
+a distributed crawler. This is a HTTP-base distributed framework i.e., clients
+communicate with the server using HTTP.
+
+The process of crawling the contents of a site can be compromised of many
+different classes tasks: collecting index pages, discovering article pages,
+downloading articles, downloading comments etc.  For each of these classes of
+"tasks" one Task Controller should be created.  Tasks controllers are
+responsible for:
+    * Storing the list of pending, done and erroneus jobs known to it,
+    * Submiting pending jobs for client processing (by using a scheduler. More
+      on this latter),
+    * Processing client responses (as result of job assignments)
+
+Most of this functionalyity can be inheritad from BaseControler, which also
+provides the needed funcionality to register the TaskControler with the HTTP
+server "path-space" (thus making the task server-side code acessible to clients)
+and providing some basic status report functionality.
+
+Jobs (works) management is handled by a DistributedCrawler.server.scheduler
+instance. Since scheduler instances don't provide persistent/safe storage for
+known tasks, this must be done by Tasks Controlers. The scheduler itself is
+task-agnostic: it only understands "commands", i.e., "ACTION parameter" pairs.
+Usually, for everty Task Controler there will be a corresponding ACTION.
+
+Since we use twisted as our HTTP server framework, some knowledge of twisted.web
+"lingo" is suggested.
+"""
+
+__version__ = "0.3.posdigg"
+__date__ = "2008-09-29 21:09:46 -0300 (Mon, 29 Sep 2008)"
+__author__ = "Tiago Alves Macambira"
+__copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
+__license__ = 'X11'
 
 import time
 import os
@@ -14,10 +49,28 @@ from twisted.persisted.dirdbm import DirDBM
 import scheduler
 sched_version = scheduler.__version__ 
 
-class InvalidClientId(Exception): pass
+########################################################################
+#
+# This is Generic stuf
+#
+########################################################################
+
+
+class InvalidClientId(Exception):
+    """Signals that an invalid, malformed of missing ClientID was seen."""
+    pass
 
 
 class ManageScheduler(resource.Resource):
+    """Basic management and stats.  interface for DistributedCrawler servers.
+    
+    This page (resource) provide a simple way to control a DistributedCrawler
+    server and to retrieve information about the crawling process: jobs done,
+    pending, etc.
+    
+    Information about jobs are retrieved directly from the scheduler and from
+    controlers for specific tasks.
+    """
     stats_html = """<html>
     <head><title>Manage Scheduler Parameters</title></head>
     <body>
@@ -43,26 +96,36 @@ class ManageScheduler(resource.Resource):
     </body>
     </html> """
 
-    def __init__(self,scheduler,timer, other_services={}):
+    def __init__(self, scheduler, timer, other_services={}):
+        """ManageScheduler constructor.
+        
+        Args:
+            scheduler: A DistributedCrawler.server.scheduler instance.
+
+            timer: a twisted.internet.task.LoopingCall instance. This MUST be
+                the same instance used for the scheduler construction.
+
+            other_services: a dict of Task Controlers, where the keys are the
+                tasks' names and values' their instances.
+        """
         resource.Resource.__init__(self)
         self.scheduler = scheduler
         self.timer = timer
         self.other_services = other_services
 
     def _getOtherServicesStatus(self):
+        """Return the HTML code reporting the status of known Task Controlers."""
         buf = []
         for name, serv  in self.other_services.items():
-            buf.append('<h1>%s Status</h1>\n%s\n' % (name, serv.getStatus()) )
-
+            buf.append('<h1>%s Status</h1>\n%s\n' % (name, serv.getStatus()))
         return ''.join(buf)
 
-    def render(self,request):
+    def render(self, request):
+        """Render HTML code for the ManageScheduler page"""
         if request.args.has_key('interval'):
             interval = int(request.args['interval'][0])
             self.scheduler.reschedule(interval)
-
         now = time.time()
-
         stats = {   'interval' : self.scheduler.interval,
                     'next_interval_in': self.scheduler.next_interval - now,
                     'ready': len(self.scheduler.ready_queue),
@@ -77,25 +140,47 @@ class ManageScheduler(resource.Resource):
         
 
 class Ping(resource.Resource):
+    """Handles client's periodic contact request and dispatches jobs.
+    
+    Clients (peers) periodically contact the server to inform it they are alive
+    and to request work to do. This resource handles this contact request.
+
+    @warning: most clients expect to find this resource in the "/ping" path.
+    """ 
     def __init__(self,scheduler, client_reg):
+        """Constructor.
+
+        Args:
+            scheduler: a DistributedCrawler.scheduler instance.
+            
+            client_reg: A ClientRegistry instance.
+        """
         resource.Resource.__init__(self)
         self.scheduler = scheduler
         self.client_reg = client_reg
 
     def render(self,request):
+        """Render the command that should be returned to the client."""
         client_id = self.client_reg.updateClientStats(request)
         return self.scheduler.renderPing(client_id)
 
-    def getChild(self, path, request):
-        return self
 
 class BaseControler(resource.Resource):
-    """Base class with all the common funcionality of a controller.
+    """Base funcionality of a Task Controller.
 
-    Controlers are responsable for managing particular type of jobs,
-    registering them as clients add them, marking them as done when
-    so is the case and managing persistent storage facilities for
-    the resources they manage.
+    Controllers are responsable for managing particular classes of tasks,
+    keeping them in stable storage, loading and registering them with the
+    scheduler at start-up and processing clients reponses for said tasks.
+
+    Managing with jobs are pending, marking them as done (and removing 'em from
+    the scheduler) and keeping track of erroneus jobs is controller
+    responsability as well -- most of it is implemented here, in BaseControler.
+
+    Clients will contact a controller to return the resulting of a dispached
+    job through the HTTP web-server, which in turn will call the controller's
+    render_POST method. The controller should process the client response
+    acordingly.
+
 
     NOTICE: For subclasses you will have to set:
         * the following class attributes:
@@ -108,14 +193,18 @@ class BaseControler(resource.Resource):
     STATUS_HTML = """<dl>
             <dt>Queued jobs</dt><dd>%(queued)i (%(queued_percent)02.02f%%)</dd>
             <dt>Done jobs</dt><dd>%(done)i (%(done_percent)02.02f%%)</dd>
+            <dt>Erroneus jobs</dt><dd>%(err)i (%(err_percent)02.02f%%)</dd>
             <dt>Total</dt><dd>%(total)i</dd>
         </dl>"""
 
     def __init__(self, scheduler, prefix, client_reg):
-        """
-        @param scheduler A scheduler instance. Job will be added to it.
-        @param prefix the base path where the store will be created/read.
-        @param client_reg Client Registry instace
+        """Constructor.
+
+        Args:
+            scheduler: A scheduler instance. Jobs will be added to it.
+            prefix: the base path where the persistent storage will be
+                created/read.
+            client_reg: Client Registry instance.
         """
         resource.Resource.__init__(self)
         # Set things up
@@ -125,14 +214,13 @@ class BaseControler(resource.Resource):
         # Setup stores
         queue_store_path = self.store_path + "/queue"
         done_store_path = self.store_path + "/done"
-
-        for p in [queue_store_path, done_store_path]:
+        err_store_path = self.store_path + "/error"
+        for p in [queue_store_path, done_store_path, err_store_path]:
             if not os.path.isdir(p):
                 os.makedirs(p)
-
         self.store = DirDBM(queue_store_path)
         self.done_store = DirDBM(done_store_path)
-
+        self.err_store = DirDBM(err_store_path)
         # Load previous stored data
         for job in self.store.keys():
             self._addToScheduler(job)
@@ -140,10 +228,10 @@ class BaseControler(resource.Resource):
     def _addToScheduler(self, job):
         self.scheduler.appendWork(self.ACTION_NAME, job)
 
-    def _addToStore(self,job):
+    def _addToStore(self, job):
         self.store[job] = '1'
 
-    def addJob(self,job):
+    def addJob(self, job):
         if (job not in self.done_store) and (job not in self.store):
             self._addToStore(job)
             self._addToScheduler(job)
@@ -156,10 +244,10 @@ class BaseControler(resource.Resource):
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
-    def markJobAsErroneus(self,job):
+    def markJobAsErroneus(self, job):
         # This job does exist, right? 
         if not self.store.has_key(job):
-            raise KeyError("Unknown job " + str(job) )
+            raise KeyError("Unknown job " + str(job))
         # Add this job to the error store
         self.err_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
