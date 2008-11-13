@@ -202,6 +202,8 @@ class Scheduler:
             self.ready_queue.append(self.work_queue.pop())
         for work, timestamp in self.active_queue.items():
             if timestamp < liveness_threshold:
+                # Recycle this work. We use work_queue as a FIFO "stack":
+                # we pop() from its END and we add "new" items to its START
                 del self.active_queue[work]
                 self.work_queue.insert(0, work)
         # Remove dead nodes
