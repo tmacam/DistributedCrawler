@@ -46,17 +46,9 @@ import os
 from twisted.web import server, resource
 from twisted.internet import reactor, task
 from twisted.python import log
-from twisted.python.logfile import DailyLogFile
 from twisted.persisted.dirdbm import DirDBM
 
 import scheduler
-
-
-########################################################################
-#
-# This is Generic stuf
-#
-########################################################################
 
 
 class InvalidClientId(Exception):
@@ -303,46 +295,22 @@ class BaseControler(resource.Resource):
         done = len(self.done_store)
         err = len(self.err_store)
         total = queued + done + err
+        if total == 0.0 :
+            queued_percent = 0.0
+            done_percent = 100.0
+            err_percent = 0.0
+        else:
+            queued_percent = (queued * 100.0)/total
+            done_percent = (done * 100.0)/total
+            err_percent = (err * 100.0)/total
         status = {'queued' : queued,
                   'done' : done,
                   'err' : err,
                   'total' : total,
-                  'queued_percent' : (queued * 100.0)/total,
-                  'done_percent' : (done * 100.0)/total,
-                  'err_percent' : (err * 100.0)/total }
+                  'queued_percent' : queued_percent,
+                  'done_percent' : done_percent,
+                  'err_percent' : err_percent }
         return self.STATUS_HTML % status
-
-class ArticleControler(BaseControler):
-    ACTION_NAME = "ARTICLE"
-    PREFIX_BASE = "articles"
-
-    def __init__(self, sched, prefix, client_reg, store_dir):
-        """
-        @param store_dir where the articles (compressed) will be stored.
-        """
-        BaseControler.__init__(self, sched, prefix, client_reg)
-        # Setup a directory where we store received articles.
-        # Try to create this directory if it doesn't exist
-        if not os.path.isdir(store_dir):
-            os.makedirs(store_dir)
-        self.store_dir = store_dir
-
-    def render_POST(self, request):
-        """Process the article returned by a client."""
-        client_id = self.client_reg.updateClientStats(request)
-        # get the articleId
-        article_sid = request.args['article-sid'][0]
-        article_data = request.args['article-data'][0]
-        # save the contents of the article
-        escaped_sid = article_sid.replace('/', '_')
-        fh_filename = os.path.join(self.store_dir, escaped_sid + '.xml.gz')
-        fh = open(fh_filename, 'wb')
-        fh.write(article_data)
-        fh.close()
-        # Ok! Article saved!
-        self.markJobAsDone(article_sid)
-        log.msg("ARTICLE %s done by client %s." % (article_sid, client_id))
-        return self.scheduler.renderPing(client_id, just_ping=True)
 
 
 class ClientRegistry(resource.Resource):
@@ -522,40 +490,16 @@ class BaseDistributedCrawlingServer:
             name: Name under which this task will be listed in the '/manage'
                 status page.
         """
+        log.msg("Registering controler '%s' in path '%s'" % (name, path))
         self.root.putChild(path, controller)
         self.task_manager_ui.registerTaskController(controller, name)
 
 
     def run(self):
         """Start handling connections and events."""
+        log.msg("Starting twisted reactor")
         site = server.Site(self.root)
         reactor.listenTCP(self.port, site)
         reactor.run()
-
-
-def main():
-    print "\nIniciando server...\n"
-
-    PORT = 8700
-    PREFIX = './db/'
-    ARTICLE_STORE_DIR = '/home/digg/article_archive/'
-    INTERVAL = 60
-
-    # Setup logging
-    logfile = DailyLogFile('diggcrawler.log', '.')
-    log.startLogging(logfile)
-
-    server = BaseDistributedCrawlingServer(PORT, PREFIX, INTERVAL)
-    article_controler = ArticleControler(server.getScheduler(),
-                                         PREFIX,
-                                         server.getClientRegistry(),
-                                        ARTICLE_STORE_DIR)
-    server.registerTaskController(article_controler, 'article', 'Articles')
-    server.run()
-    
-    
-
-if __name__ == '__main__':
-    main()
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
