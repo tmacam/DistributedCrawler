@@ -40,6 +40,7 @@ __author__ = "Tiago Alves Macambira"
 __copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
 __license__ = 'X11'
 
+import gdbm
 import time
 import os
 
@@ -179,18 +180,18 @@ class Ping(resource.Resource):
 class BaseControler(resource.Resource):
     """Base funcionality of a Task Controller.
 
-    Controllers are responsable for managing particular classes of tasks,
-    keeping state information in stable storage, loading and registering pending
-    with the scheduler at start-up and processing clients reponses for said
-    tasks.
+    Controllers are responsible for managing particular classes of tasks,
+    keeping state information in stable storage, loading and registering
+    pending tasks with the scheduler at start-up and processing clients'
+    reponses for said tasks.
 
     Managing which jobs are pending, marking them as done (and removing 'em from
     the scheduler) and keeping track of erroneus jobs is a controller
     responsability as well -- most of it is implemented here, in BaseControler.
 
-    Clients will contact a controller to return the resulting of a dispached
+    Clients will contact a controller to return the results of a dispached
     job through the HTTP web-server, which in turn will call the controller's
-    render_POST method. The controller should process the client response
+    render_POST method. The controller should process clients' responses
     acordingly.
 
 
@@ -200,6 +201,14 @@ class BaseControler(resource.Resource):
             - ACTION_NAME
         * the following methods:
             - render_POST
+
+    NOTICE: This implementation uses twisted's DirDBM as stable storage
+            mechanism. To alter this overwrite setupStableStorage(). For
+            now we expect the storage mechanism to export a mapping
+            (dictionary-like) interface. This may change (be refactored)
+            in the future. Also, we used "not in xxx.keys()" instead of
+            the simpler "not in xxx" because other DBM interfaces like
+            gdbm don't provide support for this simpler interface.
     """
 
     STATUS_HTML = """<dl>
@@ -225,7 +234,22 @@ class BaseControler(resource.Resource):
         # Set things up
         self.scheduler = sched
         self.client_reg = client_reg
+        # Setup stores
         self.store_path = prefix + "/" + self.PREFIX_BASE + "/"
+        self.setupStableStorage()
+        # Load previously stored data
+        for job in self.store.keys():
+            self._addToScheduler(job)
+
+    def setupStableStorage(self):
+        """Setup stable storage used by this BaseControler.
+        
+        Load and setup stable storage mechanism for the pending, done and
+        erroneous task queues.
+
+        By default we used twisted's DirDBM, creating the directories where
+        the queues will be stored if needed.
+        """
         # Setup stores
         queue_store_path = self.store_path + "/queue"
         done_store_path = self.store_path + "/done"
@@ -236,9 +260,6 @@ class BaseControler(resource.Resource):
         self.store = DirDBM(queue_store_path)
         self.done_store = DirDBM(done_store_path)
         self.err_store = DirDBM(err_store_path)
-        # Load previously stored data
-        for job in self.store.keys():
-            self._addToScheduler(job)
 
     def _addToScheduler(self, job):
         """Register a pending job with the scheduler."""
@@ -250,7 +271,7 @@ class BaseControler(resource.Resource):
 
     def addJob(self, job):
         """Register a (probably new and unknown) job with this Controller."""
-        if (job not in self.done_store) and (job not in self.store):
+        if job not in self.done_store.keys() and job not in self.store.keys():
             self._addToStore(job)
             self._addToScheduler(job)
 
@@ -259,7 +280,7 @@ class BaseControler(resource.Resource):
         # Add to done store
         self.done_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
-        if job in self.store:
+        if job in self.store.keys():
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
@@ -275,7 +296,7 @@ class BaseControler(resource.Resource):
         # Add this job to the error store
         self.err_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
-        if job in self.store:
+        if job in self.store.keys():
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
@@ -311,6 +332,20 @@ class BaseControler(resource.Resource):
                   'done_percent' : done_percent,
                   'err_percent' : err_percent }
         return self.STATUS_HTML % status
+
+
+class GdbmBaseControler(BaseControler):
+    """A BaseControler that uses GDBM as stable storage mechanism."""
+    def setupStableStorage(self):
+        """Setup stable storage used by this BaseControler. """
+        # Setup stores
+        queue_store_path = self.store_path + "/queue.gdbm"
+        done_store_path = self.store_path + "/done.gdbm"
+        err_store_path = self.store_path + "/error.gdbm"
+        # Load for syncrhonized read and write, creating the DBs if necessary
+        self.store = gdbm.open(queue_store_path, "cs")
+        self.done_store = gdbm.open(done_store_path, "cs")
+        self.err_store = gdbm.open(err_store_path, "cs") 
 
 
 class ClientRegistry(resource.Resource):
