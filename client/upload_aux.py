@@ -1,22 +1,28 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# Based on code in private repository:
+#     upload_aux.py 217 2006-11-08 23:08:24Z tmacam 
+#
+
 """Auxiliary functions to deal with file uploading."""
 
 import sys
-import os
 import urllib2
-import random
 
 try:
     from cStringIO import StringIO
 except ImportError:
     from StringIO import StringIO
 
-from digg_article_retriever import *
 
-__all__ = ['encode_multipart_formdata','split_form_fields_and_files','upload_form']
-__version__ = "$Revision: 217 $"
+__all__ = ['encode_multipart_formdata', 'split_form_fields_and_files',
+           'upload_form']
+__version__ = "0.3.posdigg"
+__date__ = '2006-11-08 21:08:24 -0200 (Wed, 08 Nov 2006)'
+__author__ = "Tiago Alves Macambira"
+__copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
+__license__ = 'X11'
 
 
 def encode_multipart_formdata(fields, files):
@@ -54,8 +60,8 @@ def encode_multipart_formdata(fields, files):
 def split_form_fields_and_files(form_input):
     """Separate simple form fields from files-like objects
 
-    This is an auxiliary function to use witn encode_multipart_formdata. It's
-    intent is to make using encode_multipart_formdata easier and to enhence code
+    This is an auxiliary function to use with encode_multipart_formdata. It's
+    intent is to make using encode_multipart_formdata easier and to enhance code
     legibility.
     
     @return a tuple (fiels,files), in a format suitable for use with
@@ -64,55 +70,81 @@ def split_form_fields_and_files(form_input):
     fields = []
     files = []
     unknown_filename = 'unknown_filename'
-    for key,val in form_input.items():
-        if hasattr(val,'read'):
-            if hasattr(val,'name'):
+    for key, val in form_input.items():
+        if hasattr(val, 'read'):
+            if hasattr(val, 'name'):
                 filename = val.name
             else:
                 filename = unknown_filename
-            files.append((key,filename,val))
+            files.append((key, filename, val))
         else:
-            fields.append((key,val))
+            fields.append((key, val))
 
-    return (fields,files)
+    return (fields, files)
 
 
-def upload_form(to,  form_input={}, headers={}):
-
-    #print "ESSE FOI O PRINT -----\n", form_input, "\nTERMINOU PRINT-----\n"
-    #print "\nheaders: ", headers, "\n"
-
+def upload_form(to, form_input=None, headers=None):
     """Upload send a form to a server
     
     @param to           The URL the POST request will be sent to.
     @param form_input   A dictionary-like structure with form data. Items may be
-                        simple fields text fields and files-like objects.
+                        simple fields text fields and file-like objects.
     @param headers      Extra headers that must be sent with the request
 
     @return file-like object with the server response.
     """
+    if form_input is None:
+        form_input = {}
+    if headers is None:
+        headers = {}
     fields, files = split_form_fields_and_files(form_input)
-
-    #print "\nfields, files:", fields, files, "\n"
-
     # Setup request
-    content_type, body  =  encode_multipart_formdata(fields,files)
-    sent_headers = { 'Content-Type': content_type, \
-                     'Content-Length': str(len(body))}
+    content_type, body  =  encode_multipart_formdata(fields, files)
+    sent_headers = {'Content-Type': content_type, \
+                    'Content-Length': str(len(body))}
     sent_headers.update(headers)
-
-    #print "sent_headers: ", sent_headers, "\n"
-
-    req = urllib2.Request(to,body,sent_headers)
+    req = urllib2.Request(to, body, sent_headers)
     # Send  request and return response
     response = urllib2.urlopen(req)
-
-    #print "response: ", response, "\n"
-
     return response
 
 
-if __name__ == '__main__':
+######################################################################
+# TODO(macambira): Example Code - should be moved out of this file.
+######################################################################
+
+
+def slashdot_main():
+    """How to upload data to slashdot distributed crawler."""
+    from articleretriever import ArticleRetriever, LocalArticleRetriever
+
+    if len(sys.argv[1:]) < 1:
+        sys.stderr.write("Wrong number of arguments\n")
+        sys.exit(1)
+    first_page_sid = sys.argv[1]
+
+    if first_page_sid.startswith('--local'):
+        first_page_sid = '2006/10/11/123123'
+        article_ret = LocalArticleRetriever(sys.argv[2:])
+    else:
+        article_ret = ArticleRetriever(first_page_sid)
+
+    # FIXME
+    gziped_article = article_ret.getArticleCompressed()
+    #gziped_article=open('/tmp/data.gz','rb')
+
+    form_data = {'article-data' : gziped_article,
+                 'article-sid'  : first_page_sid}
+    my_headers = {'client-id' : 'xxxxxxxxxxxxxxxxxxxx'}
+    #my_files = [('article-data','filename',gziped_article)]
+    response = upload_form('http://localhost:8000/utest', form_data, my_headers)
+
+    print response.read()
+
+
+def digg_main():
+    """How to upload data to slashdot distributed crawler."""
+    from digg_article_retriever import Article_Retriever
 
     story_id = 190108
     total_comments = 214
@@ -127,6 +159,10 @@ if __name__ == '__main__':
     response = upload_form('http://localhost:8700/utest', form_data, my_headers)
 
     print response.read()
+
+
+if __name__ == '__main__':
+    digg_main()
 
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
