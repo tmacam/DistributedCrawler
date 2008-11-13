@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Based on code in private repository:
-#     upload_aux.py 243 2006-11-22 09:20:37 -0200 tmacam 
+#     client.py 243 2006-11-22 09:20:37 -0200 tmacam 
 #
 
 """Basic infrastructure for DistributedCrawling clients.
@@ -32,14 +32,8 @@ import os
 import urllib2
 import time
 import traceback
-from socket import gethostname, getfqdn 
-from urllib import urlencode
+import socket
 import uuid
-import upload_aux
-from BeautifulSoup import BeautifulSoup
-from digg_article_retriever import Article_Retriever, NothingForYouToSeeErrorPage, \
-                             __version__ as articleretriever_version
-from daemonize import createDaemon
 
 
 # TODO(macambira): perhaps python has a nice logging framework now
@@ -100,7 +94,7 @@ class BaseClient(object):
         self.id = client_id
         self.base_url = base_url
         self.headers = {'client-id' : client_id,
-                        'client-hostname' : getfqdn(),
+                        'client-hostname' : socket.getfqdn(),
                         'client-version' : __version__,
                         'client-arver' : "unknown"}
         # Setup store
@@ -119,7 +113,7 @@ class BaseClient(object):
         n_attempts = 0
         # Time to sleep in minutes
         sleep_delay = 0     
-        while 1==1:
+        while True:
             try:
                 try:
                     log.flush()
@@ -137,7 +131,8 @@ class BaseClient(object):
                     raise
             except:
                 if n_attempts > 5:
-                    log.write("RUN - GIVING UP AFTER %i ATTEMPTS\n" % n_attempts)
+                    log.write("RUN - GIVING UP AFTER %i ATTEMPTS\n" % \
+                              n_attempts)
                     raise
                 sleep_delay = sleep_delay + 15
                 n_attempts = n_attempts + 1
@@ -176,13 +171,15 @@ class BaseClient(object):
             self.handlers[action](param)
 
     def _write_to_store(self, article_id, data):
-        """Write some sort of retrieved data (article) to the local store directory.
+        """Write some sort of retrieved data (article) into a file in the
+        local store.
 
         This is only performed if self.store_dir was set during this instance's
         creation.
 
         @param article_id  identifier of article or data. Should be a
-                           filesystem-friendly filename.
+                           filesystem-friendly filename. Will be used as a
+                           filename.
         @param data        A StringIO object with the article contents. It is
                            good practice to have data compressed in gzip format.
         """
@@ -210,7 +207,6 @@ class BaseClient(object):
 ######################################################################
 # Example Clients
 #
-# TODO(macambira): move'em out of this module
 ######################################################################
 
 
@@ -223,7 +219,7 @@ class PongClient(BaseClient):
         # Registering Command Handlers
         self.handlers['PONG'] = self.pong
 
-    def pong(self, params):
+    def pong(self, _params):
         """Command handler that just prints pong in the screen."""
         print "PONG!"
         # Ok. Command, handled. Now what?
@@ -232,249 +228,67 @@ class PongClient(BaseClient):
         # need nor reason to call _handleCommand(..., do_sleep=True)
 
 
-class DiggClient(BaseClient):
-    """Client for crawling digg articles."""
-    def __init__(self, client_id, base_url, store_dir=None):
-        """DiggClient Constructor."""
-        # Parent class constructor
-        BaseClient.__init__(self, client_id, base_url, store_dir)
-        # Informing the version of our ArticleRetriver
-        self.headers["client-arver'"] =  articleretriever_version
-        # Registering Command Handlers
-        self.handlers['ARTICLE'] = self.article
-
-    def _write_to_store(self, article_id, data):
-            """Write a (compressed) article to store.
-            
-            Article_id is turned into something filesystem safe here.
-            """
-            safe_id = article_id.replace('/', '_')
-            safe_id += '.xml.gz'
-            BaseClient._write_to_store(self, safe_id, data)
-
-    def article(self, params):
-        """Retrieve an article and send it to the server."""
-        # Retrieve the article's id and its number of comments
-        server_data = params.replace('/', ' ')
-        server_data = server_data.strip()
-        story_id, total_comments = server_data.split()
-        # Download article
-        log.write( "ARTICLE " + str(story_id) + " BEGIN\n")
-        downloader = Article_Retriever(story_id, total_comments)
-        compressed_article = downloader.get_article_compressed()
-        self._write_to_store(story_id, compressed_article)
-        log.write( "ARTICLE " + str(story_id) + " GOT COMPRESSED DATA\n")
-        # Setup upload form and headers
-        upload_headers = dict(self.headers)
-        form_data = {'article-data' : compressed_article,
-                     'article-sid'  : params,
-                     'client-id'    : self.id}
-        # Upload the article
-        upload_url = self.base_url + '/article/' + params
-        response = upload_aux.upload_form(upload_url, form_data, upload_headers)
-        log.write( "ARTICLE " + story_id + " END\n")
-        # Ok. Command, handled. Now what?
-        # Do what the server told us to.
-        # Command MUST be SLEEP. We will sleep for at least self.MIN_SLEEP
-        command = response.read()
-        self._handleCommand(command, do_sleep=True)
-
-
-class SlashClient(BaseClient):
-    """Client for crawling Slashdot Articles."""
-    def __init__(self, client_id, base_url, store_dir=None):
-        """DiggClient Constructor."""
-        # Parent class constructor
-        BaseClient.__init__(self, client_id, base_url, store_dir)
-        # Registering Command Handlers
-        self.handlers['ISSUE'] = self.issue
-        self.handlers['ARTICLE'] = self.article
-
-    def _write_to_store(self, article_id, data):
-            """Write a (compressed) article to store.
-            
-            Article ids is turned into something filesystem safe here.
-            """
-            safe_id = article_id.replace('/', '_')
-            safe_id += '.html.gz'
-            BaseClient._write_to_store(self, safe_id, data)
-
-    def issue(self, params):
-        """Download a the list of articles published in a given day -- a issue."""
-        issue_url = "http://slashdot.org/index.pl?issue=" + params
-        # Get and parse the issue
-        log.write("ISSUE " + issue_url + "\n")
-        data = urllib2.urlopen(issue_url).read()
-        soup = BeautifulSoup(data)
-        urls = [i.a['href'] for i in soup.findAll(['li','span'],attrs={'class':['more','storytitle']})]
-        sids = [u.split('=')[1] for u in urls]
-        log.write("ISSUE %s : %s \n" % (issue_url, " ".join(sids) ) )
-        # Send the request back to the server w/ a HTTP POST request
-        data = dict(self.headers)
-        data['issue'] = params
-        data['sids'] = " ".join(sids)
-        req = urllib2.Request( self.base_url + '/issue/' + params,
-                               urlencode(data), self.headers)
-        fh = urllib2.urlopen(req)
-        # Ok. Command, handled. Now what?
-        # Do what the server told us to.
-        # Command MUST be SLEEP. We will sleep for at least self.MIN_SLEEP
-        command = fh.read()
-        self._handleCommand(command, do_sleep=True)
-
-    def article(self, params):
-        """Get the article."""
-        article_sid = params.strip()
-        log.write("ARTICLE " + article_sid + " BEGIN\n")
-        try:
-            downloader = ArticleRetriever(article_sid, log=log)
-            compressed_article = downloader.getArticleCompressed()
-            self._write_to_store(article_sid, compressed_article)
-            log.write("ARTICLE " + article_sid + " GOT COMPRESSED DATA\n")
-            # Setup upload form and headers
-            upload_headers = dict(self.headers)
-            form_data = {'article-data' : compressed_article,
-                         'article-sid'  : article_sid }
-            # Upload the article
-            upload_url = self.base_url + '/article/' + article_sid
-            response = upload_aux.upload_form(upload_url, form_data,\
-                                                    upload_headers)
-        except NothingForYouToSeeErrorPage:
-            log.write( "ARTICLE %s REPORTING NothingForYouToSee error.\n" %\
-                            article_sid )
-            # FIXME we need to report those pages to the server...
-            # Well, for the moment, let's just pretend we didn't see
-            # that command...
-            req = urllib2.Request(self.base_url + '/nothing-error/' + \
-                                    article_sid, headers=self.headers)
-            response = urllib2.urlopen(req)
-        log.write("ARTICLE " + article_sid + " END\n")
-        # Do what the server told us to.
-        # Command MUST be SLEEP. We will sleep for at least self.MIN_SLEEP
-        command = response.read()
-        self._handleCommand(command, do_sleep=True)
-
-
 ######################################################################
+#
 # Auxiliary functions
 #
-# TODO(macambira): move main out of this module or refactor it into a set of small helper functions
 ######################################################################
 
 
 def getUUID(filename):
+    """Retrieve a client id (UUID) from filename.
+    
+    If the file doesn't exists or if a UUID cannot be fond there, it will
+    create one and store it there.
+
+    Return:
+        a client id (UUID).
+    """
     # Try opening the file for reading
     try:
         fh = open(filename, 'r')
-        id = fh.read()
-        if len(id) < 36:
+        client_id = fh.read()
+        if len(client_id) < 36:
             # not a valid ID
-            id = create_and_write_id(filename)
+            client_id = create_and_write_id(filename)
     except IOError:
         # File (probably) doesn't exist. Generate and ID and add it to the file
-        id = create_and_write_id(filename)
-    return id.strip()
+        client_id = create_and_write_id(filename)
+    return client_id.strip()
+
 
 def create_and_write_id(filename):
-    id = str(uuid.uuid1())
+    """Create a new client ID (UUID), store it in filename and return it."""
+    client_id = str(uuid.uuid1())
     fh = open(filename, 'w')
-    fh.write(id)
+    fh.write(client_id)
     fh.close()
-    return id
+    return client_id
 
 
 def log_backtrace():
-    global log
+    """Outputs to "log" a backtrace of the current exception."""
     log.write("EXCEPTION in user code:\n")
     log.write('-'*60 + "\n")
     traceback.print_exc(file=log)
     log.write('-'*60 + "\n")
     log.flush()
 
+
 def log_urllib2_exception(exp):
-    global log
+    """Outputs to "log" a backtrace of the current URLLIB2 exception.
+    
+    Extra information from the exception is also output.
+    """
     log.write("EXCEPTION in user code:\n")
     log.write('-'*60 + "\n")
     traceback.print_exc(file=log)
     log.write("EXCEPTION server response:\n")
     log.write('-'*60 + "\n")
-    log.write( "\n".join([ ":".join(k,v) for k,v in e.info().items()]) )
+    log.write("\n".join([":".join(k, v) for k, v in exp.info().items()]))
     log.write('-'*60 + "\n")
-    log.write(str(e.read()))
+    log.write(str(exp.read()))
     log.write('-'*60 + "\n")
     log.flush()
 
-def reconfigStdout(stdout=None, stderr=None):
-    """Reconfigures standard output file descriptor.
-
-    This is functio should be called after createDaemon.
-
-    @param stdout Path to a file we will open for output and setup for use
-      as stdout. If None is supplied, we WON'T reconfigure stdout.
-    @param stderr. Path to a file we will open of append and setup for use
-      as stderr. If None is supplied but one was for stdout, we will bind the
-      two file descriptors togueter. If None was supplied for both nothing will
-      be done.
-    """
-    if stdout:
-        sys.stdout.close()
-        os.close(1)
-        sys.stdout = open(stdout, 'w', 1) # redirect stdout
-
-    if not (stderr is None and stdout is None):
-        sys.stderr.close()
-        os.close(2) # and associated fd's
-        if stdout:
-            os.dup2(1, 2) # fd 2 is now a duplicate of fd 1
-            sys.stderr = os.fdopen(2, 'a', 0) # redirect stderr
-        else:
-            sys.stderr = open(stderr, 'a', 0)
-
-
-def main(base_url, store_dir):
-    global log
-
-    hostname = gethostname()
-
-    id_filename = store_dir + "/" + hostname + '.id'
-    log_filename = store_dir + "/" + hostname + '.log'
-
-    # Redirecting log from output to file
-    log = open(log_filename,'a',0) 
-    id = getUUID(id_filename)
-
-    c = Client( id, base_url=base_url, store_dir=store_dir)
-    sys.stderr.write("\nStarting Client...\n")
-    log.write("STARTED " + time.asctime() + "\n")
-    
-    #print "\nbase_url: ", base_url,"\n"
-    #print "store_dir: ", store_dir,"\n"
-    #print "Cliente-id : ", c.id,"\n"
-
-    c.run()
-
-
-if __name__ == '__main__':
-    BASE_URL = 'http://www.speed.dcc.ufmg.br/digg'
-    STORE_DIR = os.getcwd()  # "." loses its meaning as soon as we deamonize
-
-    # Dettach the current proceess from the terminal and became 
-    # a daemon
-    print "Becoming a daemon"
-    res = createDaemon()
-    # We closed all stdio and redirected them for /dev/null
-    # Just in case we need them back, let's reconfigure stdout and stderr
-    reconfigStdout(STORE_DIR + "/daemon.log")
-    log = sys.stdout # we closed the old file descriptor, get the new one.
-    print "Became a daemon"
-    
-    try:
-        main(BASE_URL, STORE_DIR)
-    except urllib2.HTTPError, e:
-        log_urllib2_exception(e)
-        raise
-    except:
-        log_backtrace()
-        raise
- 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :

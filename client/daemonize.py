@@ -18,7 +18,7 @@ References:
          http://www.erlenstar.demon.co.uk/unix/faq_toc.html
 """
 
-__all__ = ['createDaemon']
+__all__ = ['createDaemon', 'reconfigStdout']
 __author__ = "Chad J. Schroeder"
 __copyright__ = "Copyright (C) 2005 Chad J. Schroeder"
 __revision__ = "$Id: daemonize.py 265 2008-07-22 18:57:18Z tmacam $"
@@ -183,6 +183,39 @@ def createDaemon():
 
    return(0)
 
+
+def reconfigStdout(stdout=None, stderr=None):
+   """Reconfigures standard output file descriptor.
+
+   This function should be called after createDaemon.
+
+   This particular function was coded by Tiago Macambira.
+
+   @param stdout Path to a file we will open for output and setup for use
+     as stdout. If None is supplied, we WON'T reconfigure stdout.
+
+   @param stderr. Path to a file we will open for append and setup for use
+     as stderr. If None is supplied but one was for stdout, we will bind the
+     two file descriptors together. If None was supplied for both nothing will
+     be done.
+   """
+   if stdout:
+      sys.stdout.close()
+      os.close(1)
+      sys.stdout = open(stdout, 'w', 1) # redirect stdout
+   # If any of stderr or stdout was defined, we will redirect stderr somehow
+   if not (stderr is None and stdout is None):
+      sys.stderr.close()
+      os.close(2) # and associated fd's
+      if stderr:
+         sys.stderr = open(stderr, 'a', 0)
+      else:
+         # Binding stderr to stdout -- the laste *IS* defined
+         assert(stdout is not None)
+         os.dup2(1, 2) # fd 2 is now a duplicate of fd 1
+         sys.stderr = os.fdopen(2, 'a', 0) # redirect stderr
+
+
 if __name__ == "__main__":
 
    retCode = createDaemon()
@@ -210,3 +243,5 @@ if __name__ == "__main__":
    open("createDaemon.log", "w").write(procParams + "\n")
 
    sys.exit(retCode)
+
+# vim: set ai tw=80 et ts=3 sw=3 sts=3 fileencoding=utf-8 :
