@@ -3,7 +3,7 @@
 #
 # $Id: scheduler.py 207  2008-06-23 17:36:26 -0300 tmacam $
 #
-# Basesd on code in private repository:
+# Based on code in private repository:
 #     scheduler.py 234 2006-11-14 01:16:46Z tmacam
 #
 

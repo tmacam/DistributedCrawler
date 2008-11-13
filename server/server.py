@@ -22,8 +22,8 @@ provides the needed funcionality to register the TaskControler with the HTTP
 server "path-space" (thus making the task server-side code acessible to clients)
 and providing some basic status report functionality.
 
-Jobs (works) management is handled by a DistributedCrawler.server.scheduler
-instance. Since scheduler instances don't provide persistent/safe storage for
+Jobs (works) management is handled by a scheduler.Scheduler
+instance. Since Scheduler instances don't provide persistent/safe storage for
 known tasks, this must be done by Tasks Controlers. The scheduler itself is
 task-agnostic: it only understands "commands", i.e., "ACTION parameter" pairs.
 Usually, for everty Task Controler there will be a corresponding ACTION.
@@ -41,13 +41,13 @@ __license__ = 'X11'
 import time
 import os
 
-from twisted.web import server, resource, http
+from twisted.web import server, resource
 from twisted.python import log
 from twisted.python.logfile import DailyLogFile
 from twisted.persisted.dirdbm import DirDBM
 
 import scheduler
-sched_version = scheduler.__version__ 
+
 
 ########################################################################
 #
@@ -57,12 +57,12 @@ sched_version = scheduler.__version__
 
 
 class InvalidClientId(Exception):
-    """Signals that an invalid, malformed of missing ClientID was seen."""
+    """Signals that an invalid, malformed or missing ClientID was seen."""
     pass
 
 
 class ManageScheduler(resource.Resource):
-    """Basic management and stats.  interface for DistributedCrawler servers.
+    """Basic management and status interface for DistributedCrawler servers.
     
     This page (resource) provide a simple way to control a DistributedCrawler
     server and to retrieve information about the crawling process: jobs done,
@@ -96,11 +96,11 @@ class ManageScheduler(resource.Resource):
     </body>
     </html> """
 
-    def __init__(self, scheduler, timer, other_services={}):
+    def __init__(self, sched, timer, other_services=None):
         """ManageScheduler constructor.
         
         Args:
-            scheduler: A DistributedCrawler.server.scheduler instance.
+            sched: A DistributedCrawler.server.scheduler.Scheduler instance.
 
             timer: a twisted.internet.task.LoopingCall instance. This MUST be
                 the same instance used for the scheduler construction.
@@ -109,23 +109,26 @@ class ManageScheduler(resource.Resource):
                 tasks' names and values' their instances.
         """
         resource.Resource.__init__(self)
-        self.scheduler = scheduler
+        self.scheduler = sched
         self.timer = timer
+        if other_services is None:
+            other_services = {}
         self.other_services = other_services
 
     def _getOtherServicesStatus(self):
-        """Return the HTML code reporting the status of known Task Controlers."""
+        """Return HTML code reporting the status of known Task Controlers."""
         buf = []
         for name, serv  in self.other_services.items():
             buf.append('<h1>%s Status</h1>\n%s\n' % (name, serv.getStatus()))
         return ''.join(buf)
 
     def render(self, request):
-        """Render HTML code for the ManageScheduler page"""
+        """Render HTML code for the ManageScheduler page."""
         if request.args.has_key('interval'):
             interval = int(request.args['interval'][0])
             self.scheduler.reschedule(interval)
         now = time.time()
+        sched_version = scheduler.__version__
         stats = {   'interval' : self.scheduler.interval,
                     'next_interval_in': self.scheduler.next_interval - now,
                     'ready': len(self.scheduler.ready_queue),
@@ -147,19 +150,19 @@ class Ping(resource.Resource):
 
     @warning: most clients expect to find this resource in the "/ping" path.
     """ 
-    def __init__(self,scheduler, client_reg):
+    def __init__(self, sched, client_reg):
         """Constructor.
 
         Args:
-            scheduler: a DistributedCrawler.scheduler instance.
+            sched: a DistributedCrawler.server.scheduler.Scheduler instance.
             
             client_reg: A ClientRegistry instance.
         """
         resource.Resource.__init__(self)
-        self.scheduler = scheduler
+        self.scheduler = sched
         self.client_reg = client_reg
 
-    def render(self,request):
+    def render(self, request):
         """Render the command that should be returned to the client."""
         client_id = self.client_reg.updateClientStats(request)
         return self.scheduler.renderPing(client_id)
@@ -169,11 +172,12 @@ class BaseControler(resource.Resource):
     """Base funcionality of a Task Controller.
 
     Controllers are responsable for managing particular classes of tasks,
-    keeping them in stable storage, loading and registering them with the
-    scheduler at start-up and processing clients reponses for said tasks.
+    keeping state information in stable storage, loading and registering pending
+    with the scheduler at start-up and processing clients reponses for said
+    tasks.
 
-    Managing with jobs are pending, marking them as done (and removing 'em from
-    the scheduler) and keeping track of erroneus jobs is controller
+    Managing which jobs are pending, marking them as done (and removing 'em from
+    the scheduler) and keeping track of erroneus jobs is a controller
     responsability as well -- most of it is implemented here, in BaseControler.
 
     Clients will contact a controller to return the resulting of a dispached
@@ -197,46 +201,53 @@ class BaseControler(resource.Resource):
             <dt>Total</dt><dd>%(total)i</dd>
         </dl>"""
 
-    def __init__(self, scheduler, prefix, client_reg):
+    def __init__(self, sched, prefix, client_reg):
         """Constructor.
 
         Args:
-            scheduler: A scheduler instance. Jobs will be added to it.
+            sched: A DistributedCrawler.server.scheduler.Scheduler instance.
+                Jobs will be added to it.
+
             prefix: the base path where the persistent storage will be
                 created/read.
-            client_reg: Client Registry instance.
+
+            client_reg: a ClientRegistry instance.
         """
         resource.Resource.__init__(self)
         # Set things up
-        self.scheduler = scheduler
+        self.scheduler = sched
         self.client_reg = client_reg 
         self.store_path = prefix + "/" + self.PREFIX_BASE + "/"
         # Setup stores
         queue_store_path = self.store_path + "/queue"
         done_store_path = self.store_path + "/done"
         err_store_path = self.store_path + "/error"
-        for p in [queue_store_path, done_store_path, err_store_path]:
-            if not os.path.isdir(p):
-                os.makedirs(p)
+        for queue_path in [queue_store_path, done_store_path, err_store_path]:
+            if not os.path.isdir(queue_path):
+                os.makedirs(queue_path)
         self.store = DirDBM(queue_store_path)
         self.done_store = DirDBM(done_store_path)
         self.err_store = DirDBM(err_store_path)
-        # Load previous stored data
+        # Load previously stored data
         for job in self.store.keys():
             self._addToScheduler(job)
 
     def _addToScheduler(self, job):
+        """Register a pending job with the scheduler."""
         self.scheduler.appendWork(self.ACTION_NAME, job)
 
     def _addToStore(self, job):
+        """Register a pending job in the persistent storage."""
         self.store[job] = '1'
 
     def addJob(self, job):
+        """Register a (probably new and unknown) job with this Controller."""
         if (job not in self.done_store) and (job not in self.store):
             self._addToStore(job)
             self._addToScheduler(job)
 
     def markJobAsDone(self, job):
+        """Mark a job as done and remove it from "pending" queues."""
         # Add to done store
         self.done_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
@@ -245,6 +256,11 @@ class BaseControler(resource.Resource):
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
     def markJobAsErroneus(self, job):
+        """Dequeue job and save it in the (persistent) list of erroneus jobs.
+        
+        Erroneus jobs are jobs that, for some reason, were flagged by clients as
+        being probelattic to handle.
+        """
         # This job does exist, right? 
         if not self.store.has_key(job):
             raise KeyError("Unknown job " + str(job))
@@ -255,17 +271,29 @@ class BaseControler(resource.Resource):
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
-    def getChild(self, path, request):
+    def getChild(self, _path, _request):
+        """Retrieve a 'child' resource from me.
+        
+        The default behaviour for BaseControler is to return itself as handler
+        for child resources. This allows for using the "path" of this resource
+        as a mean for passing extra information to the Controller. For instance,
+        you could encode the job identifier in the request path.
+        """
         return self
 
     def getStatus(self):
+        """Return the HTML code reporting the status of this Task Controller."""
         queued = len(self.store)
         done = len(self.done_store)
-        total = queued + done 
-        status= {'queued' : queued, 'done': done, 'total':total, \
-                    'queued_percent': (queued * 100)/total,
-                    'done_percent': (done * 100)/total,
-                    }
+        err = len(self.err_store)
+        total = queued + done + err
+        status = {'queued' : queued,
+                  'done' : done,
+                  'err' : err,
+                  'total' : total,
+                  'queued_percent' : (queued * 100.0)/total,
+                  'done_percent' : (done * 100.0)/total,
+                  'err_percent' : (err * 100.0)/total }
         return self.STATUS_HTML % status 
 
 class ArticleControler(BaseControler):
@@ -282,7 +310,7 @@ class ArticleControler(BaseControler):
             os.makedirs(store_dir)
         self.store_dir = store_dir
 
-    def render_POST(self,request):
+    def render_POST(self, request):
         client_id = self.client_reg.updateClientStats(request)
         # get the articleId
         article_sid = request.args['article-sid'][0]
@@ -300,7 +328,12 @@ class ArticleControler(BaseControler):
 
 
 class ClientRegistry(resource.Resource):
-    """
+    """Keeps information about the clients that contacted this server.
+
+    Besides storing information about our peers (clients), this class also
+    provides a page (resource) from with information about our clients (name,
+    ID, IP, number of jobs completed) can be gathered.
+
     Information about client is stored in a DirDBM. For a given client ID,
     we store it's CLIENT_SENT_HEADERS headers and the # of jobs performed.
     Information is stored as a string, fields separated by '#'.
@@ -308,7 +341,7 @@ class ClientRegistry(resource.Resource):
 
     isLeaf = True
 
-    CLIENT_SENT_HEADERS = ['client-id','client-hostname','client-version',\
+    CLIENT_SENT_HEADERS = ['client-id', 'client-hostname', 'client-version', \
                            'client-arver']
 
     HTML_HEADER = """<html>
@@ -326,49 +359,67 @@ class ClientRegistry(resource.Resource):
            </tr>
          <thead>
          <tbody>"""
-    HTML_FOOTER="""</tbody></table>
+
+    HTML_FOOTER = """</tbody></table>
         </body>
         </html> """
 
+    def __init__(self, sched, prefix):
+        """ClientRegistry Constructor.
 
-    def __init__(self, scheduler, prefix):
-        """
-        @param scheduler A scheduler instance. Job will be added to it.
-        @param prefix the base path where the store will be created/read.
+        Args:
+            sched: A scheduler.Scheduler instance.
+
+            prefix: The base path where the store will be created/read.
         """
         resource.Resource.__init__(self)
         # Set things up
-        self.scheduler = scheduler
+        self.scheduler = sched
         self.store_path = prefix + "/clients/"
+        # Setup/restore persistent storage for client information
         if not os.path.isdir(self.store_path):
             os.makedirs(self.store_path)
         self.known_clients = DirDBM(self.store_path)
+        # Restore information about jobs done
         self.jobs_done = {}
-        for id in self.known_clients.keys():
-            self.jobs_done[id] = int(self.known_clients[id].split("#")[4])
+        for client_id in self.known_clients.keys():
+            num_jobs_done = int(self.known_clients[client_id].split("#")[4])
+            self.jobs_done[client_id] = num_jobs_done
 
-    def updateClientStats(self, request,job_done=False):
-        """Updates information about a client.
-        
+    def updateClientStats(self, request, job_done=False):
+        """Updates information about a client and retrieve its id.
+
+        This method should be called by Task Controllers in order to keep our
+        knowledge about clients fresh and correct.
+
+        Args:
+            request: The request object passed by the twisted framework. Client
+                identification will be extracted from it.
+
+            job_done: Was a task/job completed by this client? Pass True if so,
+                or False if this was just a ping or something related.
+
         @return client's client_id.
         """
         client_id = request.getHeader('client-id')
         if client_id is None:
             raise InvalidClientId()
         if job_done:
-            self.jobs_done[client_id] = self.jobs_done.get(client_id,0) + 1
+            self.jobs_done[client_id] = self.jobs_done.get(client_id, 0) + 1
+        # store client information in persistent storage
         client_data = []
         for hdr in self.CLIENT_SENT_HEADERS:
             content = request.getHeader(hdr)
             if not content:
                 content = 'UNKNOWN'
             client_data.append(content)
-        client_data.append(str(self.jobs_done.get(client_id,0)))
+        client_data.append(str(self.jobs_done.get(client_id, 0)))
         self.known_clients[client_id] = "#".join(client_data)
 
         return client_id
 
-    def render(self,request):
+    def render(self, _request):
+        """Render HTML code for the client status page."""
         now = time.time()
         result = []
         result.append(self.HTML_HEADER)
@@ -378,12 +429,12 @@ class ClientRegistry(resource.Resource):
             if last_seen:
                 state = 'ALIVE'
             else:
-                state='DEAD'
+                state = 'DEAD'
                 last_seen = now + 1 # Avoid a (None - Float) subtracion bellow 
             # print client data
-            result.append('<tr class="%s" id="%s">' % (state,client_id))
+            result.append('<tr class="%s" id="%s">' % (state, client_id))
             for val in self.known_clients[client_id].split("#")[1:]:
-                result.append('<td>%s</td>'%val)
+                result.append('<td>%s</td>' % val)
 
             result.append('<td>%s</td>' % state)
             result.append('<td>%i</td>' % (now - last_seen))
@@ -393,7 +444,7 @@ class ClientRegistry(resource.Resource):
         
                 
 
-if __name__ == '__main__':
+def main():
     from twisted.internet import reactor, task
      
     print "\nIniciando server...\n"
@@ -404,32 +455,36 @@ if __name__ == '__main__':
     INTERVAL = 60
 
     # Setup logging
-    logfile = DailyLogFile('diggcrawler.log','.')
+    logfile = DailyLogFile('diggcrawler.log', '.')
     log.startLogging(logfile)
 
-    scheduler = scheduler.Scheduler(INTERVAL)
+    my_scheduler = scheduler.Scheduler(INTERVAL)
 
-    sched_timer = task.LoopingCall(scheduler.timerCallback)
-    scheduler.timer = sched_timer
-    scheduler.start()
+    sched_timer = task.LoopingCall(my_scheduler.timerCallback)
+    my_scheduler.timer = sched_timer
+    my_scheduler.start()
 
     root = resource.Resource()
     # Main services' resources
-    client_reg = ClientRegistry(scheduler,PREFIX)
-    article_controler = ArticleControler(scheduler, PREFIX, client_reg, ARTICLE_STORE_DIR)
+    client_reg = ClientRegistry(my_scheduler, PREFIX)
+    article_controler = ArticleControler(my_scheduler, PREFIX, client_reg,
+                                        ARTICLE_STORE_DIR)
     
-    root.putChild('ping', Ping(scheduler,client_reg))
-    root.putChild('clients',client_reg)
+    root.putChild('ping', Ping(my_scheduler, client_reg))
+    root.putChild('clients', client_reg)
     root.putChild('article', article_controler)
     
     other_service = {'Articles': article_controler}
-    root.putChild('manage', ManageScheduler(scheduler, sched_timer, other_service))
+    root.putChild('manage', ManageScheduler(my_scheduler, sched_timer,
+                                            other_service))
     
-    site=server.Site(root)
+    site = server.Site(root)
 
     reactor.listenTCP(PORT, site)
 
     reactor.run()
 
+if __name__ == '__main__':
+    main()
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
