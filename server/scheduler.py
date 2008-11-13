@@ -115,7 +115,9 @@ class Scheduler:
 
             timer: a twisted.internet.task.LoopingCall instance. This instance
                 should have scheduler.timerCallback set at its target function.
-                No arguments should be passed to the timerCallback.
+                No arguments should be passed to the timerCallback. You can
+                leave this parameter as None and just set i up after
+                construction - there is support for this.
         """
         # Setup timer
         if timer is not None:
@@ -236,7 +238,9 @@ class Scheduler:
             self.timer.stop()
 
     def reschedule(self, new_interval):
-        """Sets a new interval value and reschedule the timer accordingly."""
+        """Sets a new interval value (in seconds) and reschedule the 
+        timer accordingly.
+        """
         self.interval = new_interval
         if self.timer:
             self.timer.stop()
