@@ -346,6 +346,9 @@ class GdbmBaseControler(BaseControler):
         self.store = gdbm.open(queue_store_path, "cs")
         self.done_store = gdbm.open(done_store_path, "cs")
         self.err_store = gdbm.open(err_store_path, "cs") 
+        # clean DBs before usage
+        for db in (self.store, self.done_store, self.err_store):
+            db.reorganize()
 
 
 class ClientRegistry(resource.Resource):
