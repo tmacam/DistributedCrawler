@@ -27,17 +27,16 @@ __copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
 __license__ = 'X11'
 
 
-import sys
 import os
 import urllib2
 import time
-import traceback
+#import traceback
 import socket
 import uuid
+import logging
 
 
-# TODO(macambira): perhaps python has a nice logging framework now
-log = sys.stdout
+# TODO create a logging hierarchy
 
 
 ######################################################################
@@ -116,7 +115,6 @@ class BaseClient(object):
         while True:
             try:
                 try:
-                    log.flush()
                     fh = urllib2.urlopen(ping_req)
                     command = fh.read()
                     self._handleCommand(command)
@@ -131,13 +129,13 @@ class BaseClient(object):
                     raise
             except:
                 if n_attempts > 5:
-                    log.write("RUN - GIVING UP AFTER %i ATTEMPTS\n" % \
-                              n_attempts)
+                    logging.warning("RUN - GIVING UP AFTER %i ATTEMPTS",
+                                    n_attempts)
                     raise
                 sleep_delay = sleep_delay + 15
                 n_attempts = n_attempts + 1
-                log_msg_fmt = "RUN - IGNORING ERROR. I WILL RETRY IN %i MINS\n"
-                log.write(log_msg_fmt % sleep_delay)
+                logging.info("RUN - IGNORING ERROR. I WILL RETRY IN %i MINS",
+                             sleep_delay)
                 time.sleep(sleep_delay * 60)
 
     def _handleCommand(self, command, do_sleep=False):
@@ -187,7 +185,7 @@ class BaseClient(object):
             filename = os.path.join(self.store_dir, str(article_id))
             fh = open(filename, 'wb')
             fh.write(data.getvalue())
-            log.write("Wrote some data to local store: '%s'\n" % filename)
+            logging.info("Wrote some data to local store: '%s'", filename)
 
     # ACTIONS
     def sleep(self, param):
@@ -199,8 +197,8 @@ class BaseClient(object):
         now = time.strftime(time_str_fmt)
         wake_up_time = time.strftime(time_str_fmt, \
                                      time.localtime(time.time() + int(param)))
-        log.write("PING, sleeping for %s (now: %s wake: %s)\n" % \
-                  (str(param), now, wake_up_time))
+        logging.info("PING, sleeping for %s (now: %s wake: %s)",
+                     str(param), now, wake_up_time)
         time.sleep(float(param))
 
 
@@ -267,28 +265,30 @@ def create_and_write_id(filename):
 
 
 def log_backtrace():
-    """Outputs to "log" a backtrace of the current exception."""
-    log.write("EXCEPTION in user code:\n")
-    log.write('-'*60 + "\n")
-    traceback.print_exc(file=log)
-    log.write('-'*60 + "\n")
-    log.flush()
+    """Outputs to "log" a backtrace of the current exception.
+    
+    DEPRECATED - use logging.exception()
+    """
+    logging.exception("EXCEPTION in user code.")
+    #log.write("EXCEPTION in user code:\n")
+    #log.write('-'*60 + "\n")
+    #traceback.print_exc(file=log)
+    #log.write('-'*60 + "\n")
+    #log.flush()
 
 
 def log_urllib2_exception(exp):
-    """Outputs to "log" a backtrace of the current URLLIB2 exception.
+    """Log a backtrace of the current URLLIB2 exception.
     
     Extra information from the exception is also output.
     """
-    log.write("EXCEPTION in user code:\n")
-    log.write('-'*60 + "\n")
-    traceback.print_exc(file=log)
-    log.write("EXCEPTION server response:\n")
-    log.write('-'*60 + "\n")
-    log.write("\n".join([":".join(k, v) for k, v in exp.info().items()]))
-    log.write('-'*60 + "\n")
-    log.write(str(exp.read()))
-    log.write('-'*60 + "\n")
-    log.flush()
+    logging.exception("EXCEPTION in user code.")
+    serv_err = ["EXCEPTION server response:\n",
+                "-" * 60 + "\n",
+                "\n".join([":".join([k, v]) for k, v in exp.info().items()]),
+                "-" * 60 + "\n",
+                str(exp.read()),
+                "-" * 60 + "\n"]
+    logging.error("\n\t".join(serv_err))
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
