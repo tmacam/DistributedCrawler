@@ -1,3 +1,4 @@
+#!/usr/bin/python
 """Disk And Execution MONitor (Daemon)
 
 Configurable daemon behaviors:
@@ -17,9 +18,9 @@ References:
          http://www.erlenstar.demon.co.uk/unix/faq_toc.html
 """
 
+__all__ = ['createDaemon']
 __author__ = "Chad J. Schroeder"
 __copyright__ = "Copyright (C) 2005 Chad J. Schroeder"
-
 __revision__ = "$Id: daemonize.py 265 2008-07-22 18:57:18Z tmacam $"
 __version__ = "0.2"
 
@@ -46,6 +47,8 @@ else:
 def createDaemon():
    """Detach a process from the controlling terminal and run it in the
    background as a daemon.
+
+   @notice After becoming a daemon, your current directory will be "/".
    """
 
    try:
