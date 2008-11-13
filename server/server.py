@@ -30,6 +30,8 @@ Usually, for everty Task Controler there will be a corresponding ACTION.
 
 Since we use twisted as our HTTP server framework, some knowledge of twisted.web
 "lingo" is suggested.
+
+Logging is handled by twisted.python.log.
 """
 
 __version__ = "0.3.posdigg"
@@ -42,6 +44,7 @@ import time
 import os
 
 from twisted.web import server, resource
+from twisted.internet import reactor, task
 from twisted.python import log
 from twisted.python.logfile import DailyLogFile
 from twisted.persisted.dirdbm import DirDBM
@@ -140,6 +143,19 @@ class ManageScheduler(resource.Resource):
                     'sched_version' : sched_version,
                 }
         return self.stats_html % stats
+
+    def registerTaskController(self, controller, name):
+        """Register a task controller with the status reporting interface.
+        
+        Args:
+            controler: a task controller instance (descendent of BaseControler).
+
+            name: Name under which this task will be listed in the '/manage'
+                status page.
+
+        @warning We don't check for duplicates.
+        """
+        self.other_services[name] = controller
         
 
 class Ping(resource.Resource):
@@ -149,7 +165,7 @@ class Ping(resource.Resource):
     and to request work to do. This resource handles this contact request.
 
     @warning: most clients expect to find this resource in the "/ping" path.
-    """ 
+    """
     def __init__(self, sched, client_reg):
         """Constructor.
 
@@ -216,7 +232,7 @@ class BaseControler(resource.Resource):
         resource.Resource.__init__(self)
         # Set things up
         self.scheduler = sched
-        self.client_reg = client_reg 
+        self.client_reg = client_reg
         self.store_path = prefix + "/" + self.PREFIX_BASE + "/"
         # Setup stores
         queue_store_path = self.store_path + "/queue"
@@ -261,7 +277,7 @@ class BaseControler(resource.Resource):
         Erroneus jobs are jobs that, for some reason, were flagged by clients as
         being probelattic to handle.
         """
-        # This job does exist, right? 
+        # This job does exist, right?
         if not self.store.has_key(job):
             raise KeyError("Unknown job " + str(job))
         # Add this job to the error store
@@ -294,36 +310,38 @@ class BaseControler(resource.Resource):
                   'queued_percent' : (queued * 100.0)/total,
                   'done_percent' : (done * 100.0)/total,
                   'err_percent' : (err * 100.0)/total }
-        return self.STATUS_HTML % status 
+        return self.STATUS_HTML % status
 
 class ArticleControler(BaseControler):
     ACTION_NAME = "ARTICLE"
     PREFIX_BASE = "articles"
 
-    def __init__(self, scheduler, prefix, client_reg, store_dir):
+    def __init__(self, sched, prefix, client_reg, store_dir):
         """
         @param store_dir where the articles (compressed) will be stored.
         """
-        BaseControler.__init__(self, scheduler, prefix, client_reg)
+        BaseControler.__init__(self, sched, prefix, client_reg)
+        # Setup a directory where we store received articles.
         # Try to create this directory if it doesn't exist
         if not os.path.isdir(store_dir):
             os.makedirs(store_dir)
         self.store_dir = store_dir
 
     def render_POST(self, request):
+        """Process the article returned by a client."""
         client_id = self.client_reg.updateClientStats(request)
         # get the articleId
         article_sid = request.args['article-sid'][0]
         article_data = request.args['article-data'][0]
         # save the contents of the article
-        escaped_sid = article_sid.replace('/','_')
-        fh_filename = os.path.join(self.store_dir,escaped_sid + '.xml.gz')
-        fh = open(fh_filename,'wb')
+        escaped_sid = article_sid.replace('/', '_')
+        fh_filename = os.path.join(self.store_dir, escaped_sid + '.xml.gz')
+        fh = open(fh_filename, 'wb')
         fh.write(article_data)
         fh.close()
         # Ok! Article saved!
         self.markJobAsDone(article_sid)
-        log.msg("ARTICLE %s done by client %s." % (article_sid, client_id) )
+        log.msg("ARTICLE %s done by client %s." % (article_sid, client_id))
         return self.scheduler.renderPing(client_id, just_ping=True)
 
 
@@ -430,7 +448,7 @@ class ClientRegistry(resource.Resource):
                 state = 'ALIVE'
             else:
                 state = 'DEAD'
-                last_seen = now + 1 # Avoid a (None - Float) subtracion bellow 
+                last_seen = now + 1 # Avoid a (None - Float) subtracion bellow
             # print client data
             result.append('<tr class="%s" id="%s">' % (state, client_id))
             for val in self.known_clients[client_id].split("#")[1:]:
@@ -441,12 +459,81 @@ class ClientRegistry(resource.Resource):
             result.append('</tr>')
         result.append(self.HTML_FOOTER)
         return "".join(result)
+
+
+class BaseDistributedCrawlingServer:
+    """Simple class that handles most of the twited setup code.
+    
+    Linking all the pieces that make a DistributedCrawler server togueter is
+    rather borring -- and pretty much copy and past of of the time. This class
+    tried to fix this issue by doing most of the boring setup itself. All you
+    gotta do is instanciate and register your Task Handlers and call it's run
+    method.
+    """
+
+    def __init__(self, port=8700, prefix='./db/', interval=60):
+        """Constructor.
         
-                
+        Args:
+            port: (int) port where we will be listening for HTTP conections.
+
+            prefix: the base path where the persistent storage will be
+                created/read.
+
+            interval: (int) seconds between scheduler beats.
+        """
+        # Store config locally
+        self.port = port
+        self.prefix = prefix
+        self.interval = interval
+        # Setup Scheduler instance
+        self.scheduler = scheduler.Scheduler(self.interval)
+        sched_timer = task.LoopingCall(self.scheduler.timerCallback)
+        self.scheduler.timer = sched_timer
+        self.scheduler.start()
+        # Main main server resources
+        self.root = resource.Resource()
+        self.client_reg = ClientRegistry(self.scheduler, self.prefix)
+        self.root.putChild('clients', self.client_reg)
+        self.root.putChild('ping', Ping(self.scheduler, self.client_reg))
+        self.task_manager_ui = ManageScheduler(self.scheduler, sched_timer)
+        self.root.putChild('manage', self.task_manager_ui)
+
+    def getScheduler(self):
+        """Get the Scheduler instance used by the server."""
+        return self.scheduler
+
+    def getClientRegistry(self):
+        """Get the ClientRegistry used by the server."""
+        return self.client_reg
+
+    def registerTaskController(self, controller, path, name):
+        """Register a Task Controller with this server.
+        
+        The controller will be extenally accessible and will be
+        registered with the '/manage' status page.
+
+        Args:
+            controler: a task controller instance (descendent of BaseControler).
+
+            path: path bellow which this task controller will be externally
+                accessible.
+
+            name: Name under which this task will be listed in the '/manage'
+                status page.
+        """
+        self.root.putChild(path, controller)
+        self.task_manager_ui.registerTaskController(controller, name)
+
+
+    def run(self):
+        """Start handling connections and events."""
+        site = server.Site(self.root)
+        reactor.listenTCP(self.port, site)
+        reactor.run()
+
 
 def main():
-    from twisted.internet import reactor, task
-     
     print "\nIniciando server...\n"
 
     PORT = 8700
@@ -458,31 +545,15 @@ def main():
     logfile = DailyLogFile('diggcrawler.log', '.')
     log.startLogging(logfile)
 
-    my_scheduler = scheduler.Scheduler(INTERVAL)
-
-    sched_timer = task.LoopingCall(my_scheduler.timerCallback)
-    my_scheduler.timer = sched_timer
-    my_scheduler.start()
-
-    root = resource.Resource()
-    # Main services' resources
-    client_reg = ClientRegistry(my_scheduler, PREFIX)
-    article_controler = ArticleControler(my_scheduler, PREFIX, client_reg,
+    server = BaseDistributedCrawlingServer(PORT, PREFIX, INTERVAL)
+    article_controler = ArticleControler(server.getScheduler(),
+                                         PREFIX,
+                                         server.getClientRegistry(),
                                         ARTICLE_STORE_DIR)
+    server.registerTaskController(article_controler, 'article', 'Articles')
+    server.run()
     
-    root.putChild('ping', Ping(my_scheduler, client_reg))
-    root.putChild('clients', client_reg)
-    root.putChild('article', article_controler)
     
-    other_service = {'Articles': article_controler}
-    root.putChild('manage', ManageScheduler(my_scheduler, sched_timer,
-                                            other_service))
-    
-    site = server.Site(root)
-
-    reactor.listenTCP(PORT, site)
-
-    reactor.run()
 
 if __name__ == '__main__':
     main()
