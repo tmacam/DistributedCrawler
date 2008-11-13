@@ -144,11 +144,11 @@ def slashdot_main():
 
 def digg_main():
     """How to upload data to slashdot distributed crawler."""
-    from digg_article_retriever import Article_Retriever
+    from digg_article_retriever import ArticleRetriever
 
     story_id = 190108
     total_comments = 214
-    article_ret = Article_Retriever(story_id, total_comments)
+    article_ret = ArticleRetriever(story_id, total_comments)
 
     gziped_article = article_ret.get_article_compressed()
 

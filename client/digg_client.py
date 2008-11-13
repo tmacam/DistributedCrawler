@@ -20,7 +20,7 @@ import urllib2
 import time
 from socket import gethostname
 import upload_aux
-from digg_article_retriever import Article_Retriever, \
+from digg_article_retriever import ArticleRetriever, \
         __version__ as articleretriever_version
 from daemonize import createDaemon, reconfigStdout
 from client import BaseClient, getUUID, log_backtrace, log_urllib2_exception
@@ -58,7 +58,7 @@ class DiggClient(BaseClient):
         story_id, total_comments = server_data.split()
         # Download article
         log.write( "ARTICLE " + str(story_id) + " BEGIN\n")
-        downloader = Article_Retriever(story_id, total_comments)
+        downloader = ArticleRetriever(story_id, total_comments)
         compressed_article = downloader.get_article_compressed()
         self._write_to_store(story_id, compressed_article)
         log.write( "ARTICLE " + str(story_id) + " GOT COMPRESSED DATA\n")

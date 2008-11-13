@@ -1,13 +1,25 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-#
-# $Id: articleretriever.py 244 2006-11-23 15:20:50Z tmacam $
+# Based on code in private repository:
+#   articleretriever.py 244 2006-11-23 15:20:50Z tmacam 
 #
 
-"""Retrives articles from slashdot with all their comments in a single page."""
+
+"""Retrives articles from slashdot with all their comments in a single page.
+
+DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED
+DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED
+
+This module contains legacy code. Please keep this in mind while reading it.
+You should read article_retriever.py for a more up-to-date code.
+
+DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED
+DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED DEPRECATED
+"""
 
 import sys
+import os
 import time
 import urllib
 import urllib2
@@ -16,15 +28,17 @@ import zlib
 import re
 from BeautifulSoup import BeautifulSoup
 
+
 # Get the fastest StringIO implementation available
 try:
     import cStringIO as StringIO
 except ImportError:
-    import StringIO 
+    import StringIO
+
 
 __all__ = ['ArticleRetriever', 'LocalArticleRetriever', 'NoComments',
            'InvalidSlashdotCommentPage', 'NothingForYouToSeeErrorPage' ]
-__version__ = "$Revision: 244 $".split()[1]
+__version__ = "0.3.posdigg"
 __date__ = '$Date: 2006-11-23 13:20:50 -0200 (Thu, 23 Nov 2006) $'
 __author__ = "Tiago Alves Macambira"
 __copyright__ = 'Copyright (c) 2006 Tiago Alves Macambira'
@@ -37,6 +51,7 @@ class NoComments(Exception):
 
 class InvalidSlashdotCommentPage(Exception):
     """This i not a valid Slashdot comment page."""
+
 
 class NothingForYouToSeeErrorPage(Exception):
     """An placeholder page for content that should exist but just vanished."""
@@ -263,7 +278,6 @@ class ArticleRetriever(object):
 
 class LocalArticleRetriever(ArticleRetriever):
     def __init__(self,files):
-        import os
         cwd = os.getcwd() + '/'
         pages = []
         for f in files:
@@ -281,8 +295,6 @@ class LocalArticleRetriever(ArticleRetriever):
         return self.other_pages
         
 
-
-
 if __name__ == '__main__':
     if len(sys.argv[1:]) < 1:
         sys.stderr.write("Wrong number of arguments\n")
@@ -298,4 +310,4 @@ if __name__ == '__main__':
     print article
 
 
-# vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
+# vim: set ai tw=80 et sw=4 sts=4 ts=4 fileencoding=utf-8 :
