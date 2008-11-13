@@ -497,13 +497,15 @@ class BaseDistributedCrawlingServer:
         sched_timer = task.LoopingCall(self.scheduler.timerCallback)
         self.scheduler.timer = sched_timer
         self.scheduler.start()
-        # Main main server resources
+        # Main server resources
         self.root = resource.Resource()
         self.client_reg = ClientRegistry(self.scheduler, self.prefix)
         self.root.putChild('clients', self.client_reg)
         self.root.putChild('ping', Ping(self.scheduler, self.client_reg))
         self.task_manager_ui = ManageScheduler(self.scheduler, sched_timer)
         self.root.putChild('manage', self.task_manager_ui)
+        self.terminate = TerminateServerResource()
+        self.root.putChild('quitquitquit', self.terminate)
 
     def getScheduler(self):
         """Get the Scheduler instance used by the server."""
@@ -539,5 +541,14 @@ class BaseDistributedCrawlingServer:
         site = server.Site(self.root)
         reactor.listenTCP(self.port, site)
         reactor.run()
+
+
+class TerminateServerResource(resource.Resource):
+    "A resource whose only purpose is to gracefully shut the server down."
+
+    def render(self, request):
+        "Just stop the server."
+        reactor.stop()
+        return "Exiting"
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
