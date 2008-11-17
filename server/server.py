@@ -52,6 +52,43 @@ from twisted.persisted.dirdbm import DirDBM
 import scheduler
 
 
+######################################################################
+# Auxiliary classes and functions
+######################################################################
+
+
+class OldMappingIteratorProxy(object):
+    """Enhances old mapping-like objects by adding PEP-234 iteration.
+    
+    This class implements the Proxy pattern for mapping-like objects. It
+    enhances those objects by adding the necessary methods to make those
+    objects PEP-0234-friendly, i.e., by addinhg a __iter__() and
+    __contains__() method for those objects.
+    """
+    def __init__(self, target):
+        """Constructor.
+
+        @param target The object to be "enhanced".
+        """
+        self.__target = target
+
+    def __getattr__(self, name):
+        return getattr(self.__target, name)
+
+    def __contains__(self, key):
+        "Allows efficient use of the 'in' operator."
+        return bool(self.__target.has_key(key))
+
+    def __iter__(self):
+        "Allows plain 'for i in container: ...'."
+        return iter(self.__target.keys())
+
+
+######################################################################
+# Main classes and Functions
+######################################################################
+
+
 class InvalidClientId(Exception):
     """Signals that an invalid, malformed or missing ClientID was seen."""
     pass
@@ -271,7 +308,7 @@ class BaseControler(resource.Resource):
 
     def addJob(self, job):
         """Register a (probably new and unknown) job with this Controller."""
-        if job not in self.done_store.keys() and job not in self.store.keys():
+        if job not in self.done_store and job not in self.store:
             self._addToStore(job)
             self._addToScheduler(job)
 
@@ -280,7 +317,7 @@ class BaseControler(resource.Resource):
         # Add to done store
         self.done_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
-        if job in self.store.keys():
+        if job in self.store:
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
@@ -291,12 +328,12 @@ class BaseControler(resource.Resource):
         being probelattic to handle.
         """
         # This job does exist, right?
-        if not self.store.has_key(job):
+        if job not in self.store:
             raise KeyError("Unknown job " + str(job))
         # Add this job to the error store
         self.err_store[job] = '1'
         # Remove job from the local's and from scheduler's queue
-        if job in self.store.keys():
+        if job in self.store:
             del self.store[job]
         self.scheduler.markWorkDone(self.ACTION_NAME, job)
 
@@ -349,6 +386,10 @@ class GdbmBaseControler(BaseControler):
         self.store = gdbm.open(queue_store_path, "cs")
         self.done_store = gdbm.open(done_store_path, "cs")
         self.err_store = gdbm.open(err_store_path, "cs") 
+        # Update GDBM API by using OldMappingIteratorProxy
+        self.store = OldMappingIteratorProxy(self.store)
+        self.done_store = OldMappingIteratorProxy(self.done_store)
+        self.err_store = OldMappingIteratorProxy(self.err_store)
         # clean DBs before usage
         for db in (self.store, self.done_store, self.err_store):
             db.reorganize()
