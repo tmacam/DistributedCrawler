@@ -72,8 +72,32 @@ class OldMappingIteratorProxy(object):
         """
         self.__target = target
 
+    # Attribute acess
+
     def __getattr__(self, name):
         return getattr(self.__target, name)
+
+    def __delattr__(self, name):
+        return delattr(self.__target, name)
+
+    # NOT USED --- Just avoid this mess and don't set any attribute on these
+    # instances.
+    #def __setattr__(self, name, val):
+    #    if name == "__target":
+    #        return object.__setattr__(self, name, val)
+    #    else:
+    #        return object.__setattr__(self.__target, name, val)
+
+    # Conteiner
+
+    def __getitem__(self, name):
+        return self.__target[name]
+
+    def __delitem__(self, name):
+        del self.__target[name]
+
+    def __setitem__(self, name, val):
+        self.__target[name] = val
 
     def __contains__(self, key):
         "Allows efficient use of the 'in' operator."
@@ -82,6 +106,9 @@ class OldMappingIteratorProxy(object):
     def __iter__(self):
         "Allows plain 'for i in container: ...'."
         return iter(self.__target.keys())
+
+    def __len__(self):
+        return len(self.__target)
 
 
 ######################################################################
