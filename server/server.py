@@ -34,7 +34,7 @@ Since we use twisted as our HTTP server framework, some knowledge of twisted.web
 Logging is handled by twisted.python.log.
 """
 
-__version__ = "0.3.posdigg"
+__version__ = "0.4.lastfm-" + "$Revision$".split()[1]
 __date__ = "2008-09-29 21:09:46 -0300 (Mon, 29 Sep 2008)"
 __author__ = "Tiago Alves Macambira"
 __copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
@@ -136,7 +136,7 @@ class ManageScheduler(resource.Resource):
     <body>
     <h1>Current Settings</h1>
     <dl>
-        <dt>Interval</dt><dd>%(interval)i seconds</dd>
+        <dt>Interval</dt><dd>%(interval)0.2f seconds</dd>
     </dl>
     <form action="manage" method="post">
         New Interval: <input type="text" name="interval" />
@@ -185,7 +185,7 @@ class ManageScheduler(resource.Resource):
     def render(self, request):
         """Render HTML code for the ManageScheduler page."""
         if request.args.has_key('interval'):
-            interval = int(request.args['interval'][0])
+            interval = float(request.args['interval'][0])
             self.scheduler.reschedule(interval)
         now = time.time()
         sched_version = scheduler.__version__

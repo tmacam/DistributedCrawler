@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 #
-# $Id: scheduler.py 207  2008-06-23 17:36:26 -0300 tmacam $
+# $Id$
 #
 # Based on code in private repository:
 #     scheduler.py 234 2006-11-14 01:16:46Z tmacam
@@ -36,7 +36,7 @@
 
 
 __all__ = ["Scheduler"]
-__version__ = "0.3.posdigg"
+__version__ = "0.4.lastfm-" + "$Revision$".split()[1]
 __date__ = "2008-09-29 21:09:46 -0300 (Mon, 29 Sep 2008)"
 __author__ = "Tiago Alves Macambira"
 __copyright__ = "Copyright (c) 2006-2008 Tiago Alves Macambira"
@@ -111,7 +111,9 @@ class Scheduler:
 
         Args:
             interval: seconds between server beets. The smaller the interval,
-                the faster jobs will be moved between queues.
+                the faster jobs will be moved between queues. May be less
+                than 1.  Precision will depend on the underlying platform,
+                the available hardware, and the load on the system.
 
             timer: a twisted.internet.task.LoopingCall instance. This instance
                 should have scheduler.timerCallback set at its target function.
@@ -149,7 +151,7 @@ class Scheduler:
         now = time.time()
         self.peers[peer_id] = now
         n_peers = len(self.peers) - 1
-        next_turn = (self.next_interval - now) + (n_peers * self.interval)
+        next_turn = int((self.next_interval - now) + (n_peers * self.interval))
         # "Render" the command
         if len(self.ready_queue) > 0 and not just_ping:
             # Got work to do
@@ -196,6 +198,7 @@ class Scheduler:
         # Update timers
         now = time.time()
         liveness_threshold = now - (self.MIN_LIVENESS_INTERVALS * self.interval)
+        liveness_threshold = int(liveness_threshold)
         self.next_interval = now + self.interval
         # Deal with enqueued jobs
         if self.work_queue and len(self.ready_queue) <= self.MAX_READY_WORKS:
@@ -207,9 +210,9 @@ class Scheduler:
                 del self.active_queue[work]
                 self.work_queue.insert(0, work)
         # Remove dead nodes
-        node_liveness_threshold = now - (self.MIN_LIVENESS_CYCLES *
-                                         self.interval * 
-                                         len(self.peers))
+        node_liveness_threshold = now - int(self.MIN_LIVENESS_CYCLES *
+                                            self.interval * 
+                                            len(self.peers))
         for peer, timestamp in self.peers.items():
             if timestamp < node_liveness_threshold:
                 del self.peers[peer]
@@ -242,6 +245,13 @@ class Scheduler:
     def reschedule(self, new_interval):
         """Sets a new interval value (in seconds) and reschedule the 
         timer accordingly.
+
+        Args:
+            new_interval: new value for seconds between server beets.
+                The smaller the interval, the faster jobs will be moved between
+                queues. May be less than 1.  Precision will depend on the
+                underlying platform, the available hardware, and the load on the
+                system.
         """
         self.interval = new_interval
         if self.timer:
