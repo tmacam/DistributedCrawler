@@ -161,10 +161,7 @@ class BaseClient(object):
         if trailer != '#':
             raise WrongCommandFormat(command)
         if do_sleep:
-            if command != 'SLEEP' or int(param) < self.MIN_SLEEP:
-                self.handlers['SLEEP'](self.MIN_SLEEP)
-            else:
-                self.handlers['SLEEP'](param)
+            self.handlers['SLEEP'](max(self.MIN_SLEEP, int(param)))
         else:
             self.handlers[action](param)
 

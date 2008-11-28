@@ -43,6 +43,7 @@ __copyright__ = "Copyright (c) 2006-2008 Tiago Alves Macambira"
 __license__ = 'X11'
 
 
+import math
 import time
 from twisted.python import log
 
@@ -96,15 +97,22 @@ class Scheduler:
         a given active job failed. After this time we will "recycle" it,
         putting it back into the queue.
 
-    MIN_LIVENESS_CYCLES: Number of cycles to wait before we declare a node
+    MIN_NODE_LIVENESS_CYCLES: Number of cycles to wait before we declare a node
         as dead.  A cycle is the time it takes for every active node to have
         it's turn.
+
+    MIN_NODE_LIVENESS_CYCLE_LENGTH: Minimum ammount of time (in seconds) a
+        full cycle can take (concerning node liveness decidions). Why? If the
+        number of clients falls too low or if cycles length get too short, we
+        may experience fluctuation in the number of nodes alive. This number
+        solves this.
     """
 
     SLEEP_DELAY = 10
     MAX_READY_WORKS = 4
     MIN_LIVENESS_INTERVALS = 10
-    MIN_LIVENESS_CYCLES = 2
+    MIN_NODE_LIVENESS_CYCLES = 2
+    MIN_NODE_LIVENESS_CYCLE_LENGTH = 240
 
     def __init__(self, interval=120, timer=None):
         """Scheduler constructror.
@@ -151,7 +159,10 @@ class Scheduler:
         now = time.time()
         self.peers[peer_id] = now
         n_peers = len(self.peers) - 1
-        next_turn = int((self.next_interval - now) + (n_peers * self.interval))
+        next_turn = (self.next_interval - now) + (n_peers * self.interval)
+        next_turn = int(math.ceil(next_turn))
+        # In some odd cases next_turn can be negative. 
+        next_turn = 0 if next_turn < 0 else next_turn
         # "Render" the command
         if len(self.ready_queue) > 0 and not just_ping:
             # Got work to do
@@ -210,9 +221,10 @@ class Scheduler:
                 del self.active_queue[work]
                 self.work_queue.insert(0, work)
         # Remove dead nodes
-        node_liveness_threshold = now - int(self.MIN_LIVENESS_CYCLES *
-                                            self.interval * 
-                                            len(self.peers))
+        cycle_length = max(self.interval * len(self.peers),
+                           self.MIN_NODE_LIVENESS_CYCLE_LENGTH) 
+        node_liveness_threshold = now - int(self.MIN_NODE_LIVENESS_CYCLES * 
+                                            cycle_length)
         for peer, timestamp in self.peers.items():
             if timestamp < node_liveness_threshold:
                 del self.peers[peer]
