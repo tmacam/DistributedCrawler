@@ -162,7 +162,7 @@ class Scheduler:
         next_turn = (self.next_interval - now) + (n_peers * self.interval)
         next_turn = int(math.ceil(next_turn))
         # In some odd cases next_turn can be negative. 
-        next_turn = 0 if next_turn < 0 else next_turn
+        next_turn = max(0, next_turn)
         # "Render" the command
         if len(self.ready_queue) > 0 and not just_ping:
             # Got work to do
