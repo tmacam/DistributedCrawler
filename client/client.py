@@ -34,6 +34,7 @@ import time
 import socket
 import uuid
 import logging
+from backtrace import BacktraceReporter
 
 
 # TODO create a logging hierarchy
@@ -108,6 +109,7 @@ class BaseClient(object):
         # Common setup
         ping_url = self.base_url + '/ping'
         ping_req = urllib2.Request(ping_url, headers=self.headers)
+        command = None
         # Retry setup
         n_attempts = 0
         # Time to sleep in minutes
@@ -128,6 +130,11 @@ class BaseClient(object):
                     log_backtrace()
                     raise
             except:
+                # Report exception
+                reporter = BacktraceReporter(self.base_url + "/backtrace",
+                        self.headers, {'command': command})
+                reporter.start()
+                # Retry machinery
                 if n_attempts > 5:
                     logging.warning("RUN - GIVING UP AFTER %i ATTEMPTS",
                                     n_attempts)
@@ -288,4 +295,4 @@ def log_urllib2_exception(exp):
                 "-" * 60 + "\n"]
     logging.error("\n\t".join(serv_err))
 
-# vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
+# vim: set ai tw=80 et sw=4 sts=4 ts=4 fileencoding=utf-8 :

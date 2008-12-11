@@ -548,7 +548,8 @@ class BaseDistributedCrawlingServer:
     method.
     """
 
-    def __init__(self, port=8700, prefix='./db/', interval=60):
+    def __init__(self, port=8700, prefix='./db/', interval=60,
+            backtrace_log="backtrace.log"):
         """Constructor.
         
         Args:
@@ -558,6 +559,9 @@ class BaseDistributedCrawlingServer:
                 created/read.
 
             interval: (int) seconds between scheduler beats.
+
+            backtrace_log: (str) Filename where backtraces reported by clients
+                and collected by the server will be written.
         """
         # Store config locally
         self.port = port
@@ -577,6 +581,8 @@ class BaseDistributedCrawlingServer:
         self.root.putChild('manage', self.task_manager_ui)
         self.terminate = TerminateServerResource()
         self.root.putChild('quitquitquit', self.terminate)
+        self.backtrace_collector = BacktraceReportController(backtrace_log)
+        self.root.putChild('backtrace', self.backtrace_collector)
 
     def getScheduler(self):
         """Get the Scheduler instance used by the server."""
@@ -621,5 +627,41 @@ class TerminateServerResource(resource.Resource):
         "Just stop the server."
         reactor.stop()
         return "Exiting"
+
+
+class BacktraceReportController(resource.Resource):
+    """Collects backtraces reported by clients."""
+
+    isLeaf = True
+
+    def __init__(self, output_file):
+        """Constructor.
+        
+        @param output_file File were reports will be appended.
+        """
+        resource.Resource.__init__(self)
+        self.output_file = output_file
+
+    def render(self, request):
+        # we reopen it everytime so we can "clean it" between reports...
+        output = open(self.output_file, 'a', 0)
+        headers_data = []
+        args_data = []
+        separator = "\n\n" + ("=" * 70) + "\n"
+        # Format collected data
+        headers_data.append("\nHEADERS")
+        for param, value in request.getAllHeaders().items():
+            headers_data.append("%s : %s" % (param, value))
+        args_data.append("\n\nARGUMENTS")
+        for param, value in request.args.items():
+            args_data.append("%s : %s" % (param, "".join(value)))
+        # output to contents to file
+        output.write("\n\t".join(headers_data))
+        output.write("\n\t".join(args_data))
+        output.write(separator)
+        output.close()
+        log.msg("Backtrace accepted from unknown client.")
+        return "Backtrace Accepted."
+
 
 # vim: set ai tw=80 et sw=4 sts=4 fileencoding=utf-8 :
