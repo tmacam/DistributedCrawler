@@ -40,6 +40,7 @@ __author__ = "Tiago Alves Macambira"
 __copyright__ = 'Copyright (c) 2006-2008 Tiago Alves Macambira'
 __license__ = 'X11'
 
+import bsddb
 import gdbm
 import time
 import os
@@ -420,6 +421,50 @@ class GdbmBaseControler(BaseControler):
         # clean DBs before usage
         for db in (self.store, self.done_store, self.err_store):
             db.reorganize()
+
+
+class BsddbBaseControler(BaseControler):
+    """A BaseControler that uses Berkeley DB as stable storage mechanism.
+
+    Hash access method is used here.
+    """
+
+    # FIXME Update GdbmBaseControler to use the two methods bellow...
+
+    def _openDB(self, filename):
+        """Open DB with underlying implementation."""
+        return bsddb.hashopen(filename, "c")
+
+    def _syncDB(self, db):
+        """Asks the underlying DB implamentation to sync or reorganize the DB
+        contents.
+        """
+        db.sync()
+
+    def syncAllDBs(self):
+        """Sync or reorganize DBs before usage."""
+        for db in (self.store, self.done_store, self.err_store):
+            self.__syncDB(db)
+
+
+    def setupStableStorage(self):
+        """Setup stable storage used by this BaseControler. """
+        # Setup stores
+        queue_store_path = self.store_path + "/queue.bsddb"
+        done_store_path = self.store_path + "/done.bsddb"
+        err_store_path = self.store_path + "/error.bsddb"
+        # Make dirs
+        if not os.path.isdir(self.store_path):
+            os.makedirs(self.store_path)
+        # Load for syncrhonized read and write, creating the DBs if necessary
+        self.store = self._openDB(queue_store_path)
+        self.done_store = self._openDB(done_store_path)
+        self.err_store = self._openDB(err_store_path)
+        # There is no need for a "proxy wrapper" for bsddb objects...
+        # "Sync or reorganize" DBs before usage
+        self.syncAllDBs()
+
+
 
 
 class ClientRegistry(resource.Resource):
