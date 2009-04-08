@@ -488,10 +488,11 @@ class ClientRegistry(resource.Resource):
         <head>
             <title>Client Status</title>
             <link href="../static/style.css" type="text/css" rel="stylesheet" />
+            <script type="text/javascript" src="../static/sortable.js"></script>
         </head>
         <body>
         <h1>Clients</h1>
-        <table class="clientState">
+        <table class="sortable" id="clientState">
          <thead>
            <tr>
              <th>client-hostname</th><th>client-version</th>

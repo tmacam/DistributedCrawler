@@ -1,0 +1,7 @@
+thead tr { background: #ccc; font-weight: bold;}
+
+.odd { background-color: #ddd; }
+.even { background-color: #fff; }
+
+tr.DEAD.odd { background: #fcc; }
+tr.DEAD.even { background: #fee; }
