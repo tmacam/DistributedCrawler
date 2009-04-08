@@ -444,7 +444,7 @@ class BsddbBaseControler(BaseControler):
     def syncAllDBs(self):
         """Sync or reorganize DBs before usage."""
         for db in (self.store, self.done_store, self.err_store):
-            self.__syncDB(db)
+            self._syncDB(db)
 
 
     def setupStableStorage(self):
