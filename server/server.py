@@ -487,8 +487,8 @@ class ClientRegistry(resource.Resource):
     HTML_HEADER = """<html>
         <head>
             <title>Client Status</title>
-            <link href="../static/style.css" type="text/css" rel="stylesheet" />
-            <script type="text/javascript" src="../static/sortable.js"></script>
+            <link href="./static/style.css" type="text/css" rel="stylesheet" />
+            <script type="text/javascript" src="./static/sortable.js"></script>
         </head>
         <body>
         <h1>Clients</h1>
