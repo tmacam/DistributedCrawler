@@ -242,6 +242,9 @@ class Ping(resource.Resource):
         return self.scheduler.renderPing(client_id)
 
 
+# FIXME: Refactor BaseControler and GenericDBBaseControler into a single class
+# FIXME: Create AbstractBaseControler, (most of code of BaseControler)
+# FIXME: Create DirDBMBaseControler, (what's left of BaseControler)
 class BaseControler(resource.Resource):
     """Base funcionality of a Task Controller.
 
@@ -268,12 +271,14 @@ class BaseControler(resource.Resource):
             - render_POST
 
     NOTICE: This implementation uses twisted's DirDBM as stable storage
-            mechanism. To alter this overwrite setupStableStorage(). For
-            now we expect the storage mechanism to export a mapping
-            (dictionary-like) interface. This may change (be refactored)
-            in the future. Also, we used "not in xxx.keys()" instead of
-            the simpler "not in xxx" because other DBM interfaces like
-            gdbm don't provide support for this simpler interface.
+            mechanism. To alter this overwrite setupStableStorage() or
+            subclass from GenericDBBaseControler.
+            
+            For now we expect the storage mechanism to export a
+            mapping (dictionary-like) interface with full PEP-234
+            support. See class OldMappingIteratorProxy for ideas on
+            how to overcome this if your underlying implamentation does
+            not meet this requirement.
     """
 
     STATUS_HTML = """<dl>
@@ -399,72 +404,86 @@ class BaseControler(resource.Resource):
         return self.STATUS_HTML % status
 
 
-class GdbmBaseControler(BaseControler):
-    """A BaseControler that uses GDBM as stable storage mechanism."""
-    def setupStableStorage(self):
-        """Setup stable storage used by this BaseControler. """
-        # Setup stores
-        queue_store_path = self.store_path + "/queue.gdbm"
-        done_store_path = self.store_path + "/done.gdbm"
-        err_store_path = self.store_path + "/error.gdbm"
-        # Make dirs
-        if not os.path.isdir(self.store_path):
-            os.makedirs(self.store_path)
-        # Load for syncrhonized read and write, creating the DBs if necessary
-        self.store = gdbm.open(queue_store_path, "cs")
-        self.done_store = gdbm.open(done_store_path, "cs")
-        self.err_store = gdbm.open(err_store_path, "cs") 
-        # Update GDBM API by using OldMappingIteratorProxy
-        self.store = OldMappingIteratorProxy(self.store)
-        self.done_store = OldMappingIteratorProxy(self.done_store)
-        self.err_store = OldMappingIteratorProxy(self.err_store)
-        # clean DBs before usage
-        for db in (self.store, self.done_store, self.err_store):
-            db.reorganize()
+class GenericDBBaseControler(BaseControler):
+    """Base class on which controlers that use some DB for underling
+    persistence storage are based on.
+    
+    Subclasses MUST implement _openDB() and _syncDB() and MUST define
+    DB_DEFAULT_EXTENSION, as it is used by setupStableStorage() and no safe
+    default value exists, as it is sort of DB-implementation dependent.
 
-
-class BsddbBaseControler(BaseControler):
-    """A BaseControler that uses Berkeley DB as stable storage mechanism.
-
-    Hash access method is used here.
+    See notes on BaseControler documention for what we expect from DB
+    objects (i.e., PEP-234 support etc).
     """
-
-    # FIXME Update GdbmBaseControler to use the two methods bellow...
 
     def _openDB(self, filename):
         """Open DB with underlying implementation."""
-        return bsddb.hashopen(filename, "c")
+        raise NotImplementedError()
 
     def _syncDB(self, db):
-        """Asks the underlying DB implamentation to sync or reorganize the DB
-        contents.
-        """
-        db.sync()
+        """Asks the underlying DB implamentation to sync the DB contents."""
+        raise NotImplementedError()
 
     def syncAllDBs(self):
         """Sync or reorganize DBs before usage."""
         for db in (self.store, self.done_store, self.err_store):
             self._syncDB(db)
 
-
     def setupStableStorage(self):
         """Setup stable storage used by this BaseControler. """
         # Setup stores
-        queue_store_path = self.store_path + "/queue.bsddb"
-        done_store_path = self.store_path + "/done.bsddb"
-        err_store_path = self.store_path + "/error.bsddb"
+        store_path = self.store_path
+        queue_store_path = store_path + "/queue" + self.DB_DEFAULT_EXTENSION
+        done_store_path = store_path + "/done" + self.DB_DEFAULT_EXTENSION
+        err_store_path = store_path + "/error" + self.DB_DEFAULT_EXTENSION
         # Make dirs
-        if not os.path.isdir(self.store_path):
-            os.makedirs(self.store_path)
+        if not os.path.isdir(store_path):
+            os.makedirs(store_path)
         # Load for syncrhonized read and write, creating the DBs if necessary
         self.store = self._openDB(queue_store_path)
         self.done_store = self._openDB(done_store_path)
         self.err_store = self._openDB(err_store_path)
-        # There is no need for a "proxy wrapper" for bsddb objects...
         # "Sync or reorganize" DBs before usage
         self.syncAllDBs()
 
 
+class GdbmBaseControler(GenericDBBaseControler):
+    """A BaseControler that uses GDBM as stable storage mechanism."""
+
+    DB_DEFAULT_EXTENSION = ".gdbm"
+
+    def _openDB(self, filename):
+        """Open DB with underlying implementation."""
+        db =  gdbm.open(filename, "cs")
+        # Reorganize seems expensive to do in _syncDB, so do it once here
+        db.reorganize()
+        # Update GDBM API by using OldMappingIteratorProxy
+        # This is done with a "proxy wrapper" object
+        enhanced_db = OldMappingIteratorProxy(db)
+        return enhanced_db
+
+    def _syncDB(self, db):
+        """Asks the underlying DB implamentation to sync the DB contents."""
+        # databases are already opened in sync'ed mode.
+        # We could call reorganize() here but it is rather expensive...
+        pass
+
+
+class BsddbBaseControler(GenericDBBaseControler):
+    """A BaseControler that uses Berkeley DB as stable storage mechanism.
+
+    Hash access method for Berkeley DBs is used here.
+    """
+
+    DB_DEFAULT_EXTENSION = ".bsddb"
+
+    def _openDB(self, filename):
+        """Open DB with underlying implementation."""
+        return bsddb.hashopen(filename, "c")
+
+    def _syncDB(self, db):
+        """Asks the underlying DB implamentation to sync the DB contents."""
+        db.sync()
 
 
 class ClientRegistry(resource.Resource):
